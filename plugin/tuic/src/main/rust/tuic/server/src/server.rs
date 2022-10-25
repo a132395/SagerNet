@@ -1,6 +1,6 @@
 use crate::connection::Connection;
 use futures_util::StreamExt;
-use quinn::{Endpoint, EndpointConfig, Incoming, ServerConfig, VarInt};
+use quinn::{Endpoint, EndpointConfig, Incoming, ServerConfig};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::{
     collections::HashSet,
@@ -16,7 +16,6 @@ pub struct Server {
     token: Arc<HashSet<[u8; 32]>>,
     authentication_timeout: Duration,
     max_pkt_size: usize,
-    max_concurrent_stream: VarInt,
 }
 
 impl Server {
@@ -26,7 +25,6 @@ impl Server {
         token: HashSet<[u8; 32]>,
         auth_timeout: Duration,
         max_pkt_size: usize,
-        max_concurrent_stream: VarInt,
     ) -> Result<Self> {
         let socket = match listen_addr {
             SocketAddr::V4(_) => UdpSocket::bind(listen_addr)?,
@@ -46,7 +44,6 @@ impl Server {
             token: Arc::new(token),
             authentication_timeout: auth_timeout,
             max_pkt_size,
-            max_concurrent_stream,
         })
     }
 
@@ -59,7 +56,6 @@ impl Server {
                 self.token.clone(),
                 self.authentication_timeout,
                 self.max_pkt_size,
-                self.max_concurrent_stream,
             ));
         }
     }

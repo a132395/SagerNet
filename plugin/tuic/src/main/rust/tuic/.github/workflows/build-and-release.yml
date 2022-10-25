@@ -172,5 +172,4 @@ jobs:
           tag: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
           allowUpdates: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
