@@ -21,6 +21,7 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
+use super::connection::socks5_out;
 
 pub struct Config {
     pub server_config: ServerConfig,
@@ -28,12 +29,17 @@ pub struct Config {
     pub token: HashSet<[u8; 32]>,
     pub authentication_timeout: Duration,
     pub max_udp_relay_packet_size: usize,
+	pub max_concurrent_stream: VarInt,
     pub log_level: LevelFilter,
 }
 
 impl Config {
     pub fn parse(args: ArgsOs) -> Result<Self, ConfigError> {
         let raw = RawConfig::parse(args)?;
+		
+		if let Some(socks5) = raw.socks5 {
+            socks5_out::set_server(socks5.parse().unwrap());
+        }
 
         let server_config = {
             let cert_path = raw.certificate.unwrap();
@@ -86,7 +92,9 @@ impl Config {
 
         let authentication_timeout = Duration::from_secs(raw.authentication_timeout);
         let max_udp_relay_packet_size = raw.max_udp_relay_packet_size;
-        let log_level = raw.log_level;
+        let max_concurrent_stream = VarInt::from_u64(raw.max_concurrent_stream)
+            .map_err(|_| ConfigError::MaxConcurrentStream)?;
+		let log_level = raw.log_level;
 
         Ok(Self {
             server_config,
@@ -94,6 +102,7 @@ impl Config {
             token,
             authentication_timeout,
             max_udp_relay_packet_size,
+			max_concurrent_stream,
             log_level,
         })
     }
@@ -109,6 +118,8 @@ struct RawConfig {
 
     #[serde(default = "default::ip")]
     ip: IpAddr,
+	
+	socks5: Option<String>,
 
     #[serde(
         default = "default::congestion_controller",
@@ -127,6 +138,9 @@ struct RawConfig {
 
     #[serde(default = "default::max_udp_relay_packet_size")]
     max_udp_relay_packet_size: usize,
+	
+	#[serde(default = "default::max_concurrent_stream")]
+    max_concurrent_stream: u64,
 
     #[serde(default = "default::log_level")]
     log_level: LevelFilter,
@@ -140,12 +154,14 @@ impl Default for RawConfig {
             certificate: None,
             private_key: None,
             ip: default::ip(),
+			socks5: None,
             congestion_controller: default::congestion_controller(),
             max_idle_time: default::max_idle_time(),
             authentication_timeout: default::authentication_timeout(),
             alpn: default::alpn(),
             max_udp_relay_packet_size: default::max_udp_relay_packet_size(),
-            log_level: default::log_level(),
+            max_concurrent_stream: default::max_concurrent_stream(),
+			log_level: default::log_level(),
         }
     }
 }
@@ -193,6 +209,13 @@ impl RawConfig {
 
         opts.optopt(
             "",
+            "socks5",
+            "Set socks5 outbound address. E.g.: 127.0.0.1:1080",
+            "SOCKS5"
+        );
+
+        opts.optopt(
+            "",
             "congestion-controller",
             r#"Set the congestion control algorithm. Available: "cubic", "new_reno", "bbr". Default: "cubic""#,
             "CONGESTION_CONTROLLER",
@@ -225,6 +248,13 @@ impl RawConfig {
             "UDP relay mode QUIC can transmit UDP packets larger than the MTU. Set this to a higher value allows outbound to receive larger UDP packet. Default: 1500",
             "MAX_UDP_RELAY_PACKET_SIZE",
         );
+		
+		opts.optopt(
+            "",
+            "max-concurrent-stream",
+            "Set max concurrent stream number per connection allowed. Default: 100",
+            "MAX_CONCURRENT_STREAM_NUMBER",
+        );
 
         opts.optopt(
             "",
@@ -233,6 +263,8 @@ impl RawConfig {
             "LOG_LEVEL",
         );
 
+        #[cfg(unix)]
+        opts.optflag("d", "daemon", "Daemonize");
         opts.optflag("v", "version", "Print the version");
         opts.optflag("h", "help", "Print this help menu");
 
@@ -250,6 +282,15 @@ impl RawConfig {
             return Err(ConfigError::UnexpectedArguments(matches.free.join(", ")));
         }
 
+        #[cfg(unix)]
+        if matches.opt_present("daemon") {
+            let _ = realm_syscall::bump_nofile_limit();
+            if let Ok((soft, hard)) = realm_syscall::get_nofile_limit() {
+                println!("fd limit: {soft}, {hard}")
+            }
+            realm_syscall::daemonize("tuic is running in the background.");
+        }
+		
         let port = matches.opt_str("port").map(|port| port.parse());
         let token = matches.opt_strs("token");
         let certificate = matches.opt_str("certificate");
@@ -298,6 +339,10 @@ impl RawConfig {
         if let Some(ip) = matches.opt_str("ip") {
             raw.ip = ip.parse()?;
         };
+		
+        if let Some(socks5) = matches.opt_str("socks5") {
+            raw.socks5 = Some(socks5);
+        }
 
         if let Some(cgstn_ctrl) = matches.opt_str("congestion-controller") {
             raw.congestion_controller = cgstn_ctrl.parse()?;
@@ -314,6 +359,10 @@ impl RawConfig {
         if let Some(size) = matches.opt_str("max-udp-relay-packet-size") {
             raw.max_udp_relay_packet_size = size.parse()?;
         };
+		
+		if let Some(stream_num) = matches.opt_str("max-concurrent-stream") {
+            raw.max_concurrent_stream = stream_num.parse()?;
+        }
 
         let alpn = matches.opt_strs("alpn");
 
@@ -393,6 +442,10 @@ mod default {
     pub(super) const fn max_udp_relay_packet_size() -> usize {
         1500
     }
+	
+	pub(super) const fn max_concurrent_stream() -> u64 {
+        100
+    }
 
     pub(super) const fn log_level() -> LevelFilter {
         LevelFilter::Info
@@ -425,4 +478,6 @@ pub enum ConfigError {
     ParseLogLevel(#[from] ParseLevelError),
     #[error("Failed to load certificate / private key: {0}")]
     Rustls(#[from] RustlsError),
+	#[error("Max concurrent stream number exceeds bound")]
+    MaxConcurrentStream,
 }
