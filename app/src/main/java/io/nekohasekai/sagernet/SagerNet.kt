@@ -45,7 +45,6 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import go.Seq
-import io.nekohasekai.sagernet.utils.*
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.bg.test.DebugInstance
 import io.nekohasekai.sagernet.database.DataStore
@@ -116,11 +115,6 @@ class SagerNet : Application(),
 
         Theme.apply(this)
         Theme.applyNightTheme()
-        runOnDefaultDispatcher {
-                DefaultNetworkListener.start(this) {
-                    underlyingNetwork = it
-                }
-            }
 
         if (BuildConfig.DEBUG) StrictMode.setVmPolicy(
             StrictMode.VmPolicy.Builder()
@@ -297,7 +291,7 @@ class SagerNet : Application(),
 
         fun stopService() =
             application.sendBroadcast(Intent(Action.CLOSE).setPackage(application.packageName))
-            var underlyingNetwork: Network? = null
+            
 
     }
 
